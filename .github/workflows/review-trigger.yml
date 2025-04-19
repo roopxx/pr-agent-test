@@ -8,7 +8,48 @@ jobs:
   post-coderabbit-comment:
     runs-on: ubuntu-latest
     steps:
+      - name: Check for existing bot comment and skip internal PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BOT_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const prNumber = pr.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const botLogin = (await github.rest.users.getAuthenticated()).data.login;
+            // Check if PR author is a member (internal PR)
+            let isMember = false;
+            try {
+              const res = await github.rest.orgs.checkMembershipForUser({
+                org: owner,
+                username: pr.user.login
+              });
+              isMember = res.status === 204;
+            } catch (e) {
+              // Not a member or not an org repo
+            }
+            if (isMember) {
+              core.info('Skipping internal PR');
+              return;
+            }
+            // Check for existing bot comment
+            const comments = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: prNumber
+            });
+            const alreadyCommented = comments.data.some(
+              c => c.user.login === botLogin && c.body.includes('@coderabbitai review')
+            );
+            if (alreadyCommented) {
+              core.info('Bot already commented, skipping');
+              return;
+            }
+            core.setOutput('should_comment', 'true');
+
       - name: Post @coderabbitai comment
+        if: steps.check-for-existing-bot-comment-and-skip-internal-prs.outputs.should_comment == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.BOT_TOKEN }}
@@ -23,3 +64,24 @@ jobs:
               issue_number: prNumber,
               body
             });
+
+      - name: Add 'review-requested' label
+        if: steps.check-for-existing-bot-comment-and-skip-internal-prs.outputs.should_comment == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BOT_TOKEN }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const label = 'review-requested';
+            try {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: prNumber,
+                labels: [label]
+              });
+            } catch (e) {
+              core.info('Could not add label: ' + e.message);
+            }
