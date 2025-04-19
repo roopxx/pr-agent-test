@@ -1,0 +1,85 @@
+name: CodeRabbit Bot Trigger
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  trigger-coderabbit:
+    runs-on: ubuntu-latest
+    # Skip running on PRs from bots or internal automation
+    if: ${{ !contains(github.actor, 'bot') && !contains(github.actor, 'dependabot') }}
+    
+    steps:
+      - name: Check PR Status
+        id: check_pr
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo, number } = context.issue;
+            
+            // Get PR data to check if it's from a fork
+            const pr = await github.rest.pulls.get({
+              owner: owner,
+              repo: repo,
+              pull_number: number
+            });
+            
+            // Skip internal PRs if needed (uncomment to enable)
+            // if (pr.data.head.repo.full_name.startsWith(`${owner}/`)) {
+            //   core.setOutput('is_internal', 'true');
+            //   return;
+            // }
+            
+            // Get existing comments to avoid duplicates
+            const comments = await github.rest.issues.listComments({
+              owner: owner, 
+              repo: repo,
+              issue_number: number
+            });
+            
+            const botCommented = comments.data.some(comment => 
+              comment.user.login === 'your-org-coderabbit-bot' && 
+              comment.body.includes('@coderabbitai'));
+              
+            if (botCommented) {
+              core.setOutput('already_commented', 'true');
+            }
+            
+            // For rate limiting - check timing if needed
+            core.setOutput('should_comment', !botCommented ? 'true' : 'false');
+      
+      - name: Post CodeRabbit Trigger Comment
+        if: ${{ steps.check_pr.outputs.should_comment == 'true' }}
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.BOT_TOKEN }}
+          script: |
+            const { owner, repo, number } = context.issue;
+            
+            await github.rest.issues.createComment({
+              owner: owner,
+              repo: repo,
+              issue_number: number,
+              body: '@coderabbitai review'
+            });
+            
+            // Optional: Add a label
+            await github.rest.issues.addLabels({
+              owner: owner,
+              repo: repo,
+              issue_number: number,
+              labels: ['coderabbit-reviewing']
+            });
+            
+      - name: Send Slack Notification
+        if: ${{ steps.check_pr.outputs.should_comment == 'true' }}
+        uses: slackapi/slack-github-action@v1.23.0
+        with:
+          payload: |
+            {
+              "text": "🐰 CodeRabbit review triggered for PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}\n${{ github.event.pull_request.html_url }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
