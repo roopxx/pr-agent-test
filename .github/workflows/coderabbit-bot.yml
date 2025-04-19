@@ -39,32 +39,26 @@ jobs:
               issue_number: number
             });
             
-            console.log(`DEBUG: PR #${number} details - Title: "${pr.data.title}", User: ${pr.data.user.login}`);
-            console.log(`DEBUG: Checking PR #${number} for existing CodeRabbit comments (total comments: ${comments.data.length})`);
-            
-            // Log detailed comment information for debugging
-            comments.data.forEach((comment, index) => {
-              console.log(`DEBUG: Comment #${index+1} - Author: ${comment.user.login}, Created: ${comment.created_at}`);
-              console.log(`DEBUG: Comment preview: "${comment.body.substring(0, 50)}${comment.body.length > 50 ? '...' : ''}"`);
-            });
-            
             const botCommented = comments.data.some(comment => 
               comment.user.login === 'coderabbit-bot' && 
               comment.body.includes('@coderabbitai'));
               
             if (botCommented) {
-              console.log(`DEBUG: ✓ Found existing CodeRabbit comment - bot will NOT comment again`);
               core.setOutput('already_commented', 'true');
-            } else {
-              console.log(`DEBUG: ✗ No existing CodeRabbit comments found - bot WILL comment`);
             }
             
             // For rate limiting - check timing if needed
-            const shouldComment = !botCommented;
-            core.setOutput('should_comment', shouldComment ? 'true' : 'false');
-            console.log(`DEBUG: Final decision - should_comment: ${shouldComment}, PR: #${number}, Repo: ${owner}/${repo}`);
+            core.setOutput('should_comment', !botCommented ? 'true' : 'false');
       
       - name: Post CodeRabbit Trigger Comment
+        if: ${{ steps.check_pr.outputs.should_comment == 'true' }}
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          token: ${{ secrets.BOT_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: '@coderabbitai review'
+      
+      - name: Add Label
         if: ${{ steps.check_pr.outputs.should_comment == 'true' }}
         uses: actions/github-script@v6
         with:
@@ -72,28 +66,13 @@ jobs:
           script: |
             const { owner, repo, number } = context.issue;
             
-            console.log(`DEBUG: Starting comment operation for PR #${number} in ${owner}/${repo}`);
-            try {
-              console.log(`DEBUG: Attempting to post CodeRabbit trigger comment...`);
-              await github.rest.issues.createComment({
-                owner: owner,
-                repo: repo,
-                issue_number: number,
-                body: '@coderabbitai review'
-              });
-              console.log('Comment posted successfully');
-              
-              // Optional: Add a label
-              console.log('Adding coderabbit-reviewing label to PR');
-              await github.rest.issues.addLabels({
-                owner: owner,
-                repo: repo,
-                issue_number: number,
-                labels: ['coderabbit-reviewing']
-              });
-            } catch (error) {
-              console.error(`DEBUG: Error posting comment or adding label: ${error.message}`);
-            }
+            // Add a label
+            await github.rest.issues.addLabels({
+              owner: owner,
+              repo: repo,
+              issue_number: number,
+              labels: ['coderabbit-reviewing']
+            });
             
       - name: Send Slack Notification
         if: ${{ steps.check_pr.outputs.should_comment == 'true' }}
