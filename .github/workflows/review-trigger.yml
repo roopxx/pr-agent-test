@@ -9,44 +9,63 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check for existing bot comment and skip internal PRs
+        id: check-for-existing-bot-comment-and-skip-internal-prs
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.BOT_TOKEN }}
           script: |
-            const pr = context.payload.pull_request;
-            const prNumber = pr.number;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const botLogin = (await github.rest.users.getAuthenticated()).data.login;
-            // Check if PR author is a member (internal PR)
-            let isMember = false;
-            try {
-              const res = await github.rest.orgs.checkMembershipForUser({
-                org: owner,
-                username: pr.user.login
-              });
-              isMember = res.status === 204;
-            } catch (e) {
-              // Not a member or not an org repo
-            }
-            if (isMember) {
-              core.info('Skipping internal PR');
-              return;
-            }
-            // Check for existing bot comment
-            const comments = await github.rest.issues.listComments({
-              owner,
-              repo,
-              issue_number: prNumber
-            });
-            const alreadyCommented = comments.data.some(
-              c => c.user.login === botLogin && c.body.includes('@coderabbitai review')
-            );
-            if (alreadyCommented) {
-              core.info('Bot already commented, skipping');
-              return;
-            }
-            core.setOutput('should_comment', 'true');
+        const pr = context.payload.pull_request;
+        const prNumber = pr.number;
+        const owner = context.repo.owner;
+        const repo = context.repo.repo;
+        
+        core.info(`DEBUG: Processing PR #${prNumber} in ${owner}/${repo}`);
+        core.info(`DEBUG: PR author: ${pr.user.login}`);
+        
+        const botLogin = (await github.rest.users.getAuthenticated()).data.login;
+        core.info(`DEBUG: Bot username: ${botLogin}`);
+        
+        // Check if PR author is a member (internal PR)
+        let isMember = false;
+        try {
+          core.info(`DEBUG: Checking if ${pr.user.login} is a member of ${owner}`);
+          const res = await github.rest.orgs.checkMembershipForUser({
+            org: owner,
+            username: pr.user.login
+          });
+          isMember = res.status === 204;
+          core.info(`DEBUG: Membership check result: ${isMember ? 'Is member' : 'Not member'}`);
+        } catch (e) {
+          core.info(`DEBUG: Membership check error: ${e.message}`);
+          // Not a member or not an org repo
+        }
+        
+        if (isMember) {
+          core.info('DEBUG: Skipping internal PR');
+          return;
+        }
+        
+        // Check for existing bot comment
+        core.info(`DEBUG: Checking for existing bot comments`);
+        const comments = await github.rest.issues.listComments({
+          owner,
+          repo,
+          issue_number: prNumber
+        });
+        core.info(`DEBUG: Found ${comments.data.length} comments on this PR`);
+        
+        const alreadyCommented = comments.data.some(
+          c => c.user.login === botLogin && c.body.includes('@coderabbitai review')
+        );
+        core.info(`DEBUG: Bot already commented: ${alreadyCommented}`);
+        
+        if (alreadyCommented) {
+          core.info('DEBUG: Bot already commented, skipping');
+          return;
+        }
+        
+        core.info('DEBUG: Setting should_comment to true');
+        core.setOutput('should_comment', 'true');
 
       - name: Post @coderabbitai comment
         if: steps.check-for-existing-bot-comment-and-skip-internal-prs.outputs.should_comment == 'true'
