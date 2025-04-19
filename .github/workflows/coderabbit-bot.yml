@@ -40,7 +40,7 @@ jobs:
             });
             
             const botCommented = comments.data.some(comment => 
-              comment.user.login === 'your-org-coderabbit-bot' && 
+              comment.user.login === 'coderabbit-bot' && 
               comment.body.includes('@coderabbitai'));
               
             if (botCommented) {
