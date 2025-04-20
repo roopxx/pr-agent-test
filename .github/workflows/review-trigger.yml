@@ -9,6 +9,12 @@ permissions:
   pull-requests: write
   issues: write
 
+# Global environment variables
+env:
+  ORG_NAME: 'roopxx'
+  RATE_LIMIT_MINUTES: 5
+  RATE_LIMIT_LABEL: 'rate-limited'
+  
 jobs:
   trigger-coderabbit-review:
     name: Trigger CodeRabbit Review
@@ -19,11 +25,11 @@ jobs:
         id: org_membership
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.BOT_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
           result-encoding: string
           script: |
             try {
-              const org = 'roopxx'; // Your organization name
+              const org = process.env.ORG_NAME; // Using environment variable
               const username = context.payload.pull_request.user.login;
               
               console.log(`Checking if ${username} is a member of ${org} organization`);
@@ -32,56 +38,123 @@ jobs:
                 org: org,
                 username: username
               }).then(() => {
+                console.log(`${username} is a member of ${org}`);
                 return 'true'; // User is a member
               }).catch((error) => {
                 if (error.status === 404) {
+                  console.log(`${username} is not a member of ${org}`);
                   return 'false'; // User is not a member
                 }
                 throw error; // Re-throw other errors
               });
               
-              console.log(`Membership result: ${result}`);
               return result;
             } catch (error) {
-              console.log(`Error checking membership: ${error}`);
+              console.error(`Error checking membership: ${error.message}`);
+              // Log detailed error information for troubleshooting
+              if (error.response) {
+                console.error(`Status: ${error.response.status}, Headers: ${JSON.stringify(error.response.headers)}`);
+              }
               return 'false'; // Default to false on error
             }
           
-      - name: Record internal PR
+      - name: Record internal PR metrics
         if: steps.org_membership.outputs.result == 'true'
         run: |
           echo "Skipping CodeRabbit review for internal PR from organization member: ${{ github.event.pull_request.user.login }}"
           
-      - name: Check Rate Limit
-        id: check_rate_limit
+      # Improved rate limiting using GitHub API instead of filesystem
+      - name: Check API-based Rate Limit
+        id: api_rate_limit
         if: steps.org_membership.outputs.result == 'false'
-        run: |
-          # Get current time in seconds since epoch
-          CURRENT_TIME=$(date +%s)
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
+          result-encoding: string
+          script: |
+            try {
+              const rateLimitMinutes = parseInt(process.env.RATE_LIMIT_MINUTES);
+              const rateLimitLabel = process.env.RATE_LIMIT_LABEL;
+              const now = new Date();
+              const cutoffTime = new Date(now.getTime() - (rateLimitMinutes * 60 * 1000));
+              
+              console.log(`Checking rate limit using GitHub API state (${rateLimitMinutes} minute window)`);
+              
+              // Check if the rate limit label exists on this PR
+              const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number
+              });
+              
+              const hasRateLimitLabel = labels.some(label => label.name === rateLimitLabel);
+              
+              if (hasRateLimitLabel) {
+                // Get PR timeline to find when the label was added
+                const { data: timeline } = await github.rest.issues.listEventsForTimeline({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  per_page: 100
+                });
+                
+                // Find the most recent labeled event for our rate limit label
+                const labelEvents = timeline.filter(event => 
+                  event.event === 'labeled' && event.label && event.label.name === rateLimitLabel
+                ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                
+                if (labelEvents.length > 0) {
+                  const lastLabelTime = new Date(labelEvents[0].created_at);
+                  
+                  console.log(`Rate limit label was last added at: ${lastLabelTime.toISOString()}`);
+                  console.log(`Cutoff time for rate limiting: ${cutoffTime.toISOString()}`);
+                  
+                  if (lastLabelTime > cutoffTime) {
+                    // Still within rate limit window
+                    console.log(`PR is still rate limited (${Math.round((lastLabelTime - cutoffTime) / 1000 / 60)} minutes remaining)`);
+                    return 'rate-limited';
+                  } else {
+                    // Rate limit expired, remove the label
+                    console.log('Rate limit expired, removing label');
+                    await github.rest.issues.removeLabel({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: context.issue.number,
+                      name: rateLimitLabel
+                    });
+                  }
+                }
+              }
+              
+              // Not rate limited
+              return 'proceed';
+            } catch (error) {
+              console.error(`Error checking rate limit: ${error.message}`);
+              // Fall back to proceeding if there's an error checking the rate limit
+              return 'proceed';
+            }
           
-          # Check if we've triggered a review in the last 5 minutes
-          if [ -f "/tmp/last_review_time.txt" ]; then
-            LAST_TIME=$(cat /tmp/last_review_time.txt)
-            DIFF=$((CURRENT_TIME - LAST_TIME))
-            
-            if [ $DIFF -lt 300 ]; then
-              echo "should_skip=true" >> $GITHUB_OUTPUT
-              echo "Rate limited - last review was $DIFF seconds ago"
-            else
-              echo "should_skip=false" >> $GITHUB_OUTPUT
-              echo $CURRENT_TIME > /tmp/last_review_time.txt
-            fi
-          else
-            echo "should_skip=false" >> $GITHUB_OUTPUT
-            echo $CURRENT_TIME > /tmp/last_review_time.txt
-          fi
+      - name: Apply rate limit label
+        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['${{ env.RATE_LIMIT_LABEL }}']
+            });
+            console.log('Applied rate limit label for tracking');
           
       - name: Checkout Repository
-        if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
-        uses: actions/checkout@v3
+        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
+        uses: actions/checkout@v4
       
       - name: Post Comment to Trigger CodeRabbit
-        if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
+        id: trigger_review
+        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
         uses: peter-evans/create-or-update-comment@v4
         with:
           token: ${{ secrets.BOT_TOKEN }}
@@ -89,25 +162,62 @@ jobs:
           body: "@coderabbitai review"
           
       - name: Add Pending Label
-        if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
+        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed' && success()
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.BOT_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
           script: |
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: ['review-pending']
-            });
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['review-pending']
+              });
+              console.log('Added review-pending label');
+            } catch (error) {
+              console.error(`Error adding label: ${error.message}`);
+              // Continue workflow even if label fails
+            }
             
       - name: Send Slack Notification
-        if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
-        uses: slackapi/slack-github-action@v1.23.0
+        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed' && success()
+        uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
             {
-              "text": "CodeRabbit review triggered for PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}\nAuthor: ${{ github.event.pull_request.user.login }}\nURL: ${{ github.event.pull_request.html_url }}"
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "CodeRabbit Review Triggered",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*PR:* <${{ github.event.pull_request.html_url }}|#${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}>"
+                    },
+                    {
+                      "type": "mrkdwn", 
+                      "text": "*Author:* ${{ github.event.pull_request.user.login }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "Triggered at: ${{ github.event.pull_request.updated_at }}"
+                    }
+                  ]
+                }
+              ]
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -116,11 +226,37 @@ jobs:
         if: steps.org_membership.outputs.result == 'true'
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.BOT_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
           script: |
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['internal-pr']
+              });
+              console.log('Added internal-pr label');
+            } catch (error) {
+              console.error(`Error adding label: ${error.message}`);
+              // Continue workflow even if label fails
+            }
+            
+      - name: Record Metrics
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
+          script: |
+            const date = new Date().toISOString().split('T')[0];
+            const metrics = {
+              date: date,
+              pr: context.payload.pull_request.number,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: ['internal-pr']
-            });
+              author: context.payload.pull_request.user.login,
+              internal: steps.org_membership.outputs.result === 'true',
+              rateLimited: steps.api_rate_limit?.outputs?.result === 'rate-limited',
+              reviewTriggered: steps.trigger_review?.outcome === 'success'
+            };
+            
+            // Log metrics for debugging
+            console.log('PR Review Metrics:', JSON.stringify(metrics, null, 2));
