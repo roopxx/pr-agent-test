@@ -1,0 +1,87 @@
+# Configuration for the GitHub Actions PR Labeler for Django Projects
+
+# Django-specific file patterns
+"django-models":
+- changed-files:
+  - any-glob-to-any-file: ['**/models.py', '**/models/**/*.py']
+
+"django-views":
+- changed-files:
+  - any-glob-to-any-file: ['**/views.py', '**/views/**/*.py']
+
+"django-templates":
+- changed-files:
+  - any-glob-to-any-file: ['**/templates/**/*.html']
+
+"django-urls":
+- changed-files:
+  - any-glob-to-any-file: ['**/urls.py']
+
+"django-forms":
+- changed-files:
+  - any-glob-to-any-file: ['**/forms.py']
+
+"django-admin":
+- changed-files:
+  - any-glob-to-any-file: ['**/admin.py']
+
+"django-settings":
+- changed-files:
+  - any-glob-to-any-file: ['**/settings.py', '**/settings/**/*.py']
+
+"django-migrations":
+- changed-files:
+  - any-glob-to-any-file: ['**/migrations/**/*.py']
+
+# Frontend changes
+"frontend":
+- changed-files:
+  - any-glob-to-any-file: ['**/static/**/*.css', '**/static/**/*.js', 'dashboard.html', '**/templates/**/*.html']
+
+# Database-related changes
+"database":
+- changed-files:
+  - any-glob-to-any-file: ['**/models.py', '**/migrations/**/*']
+
+# Testing
+"tests":
+- changed-files:
+  - any-glob-to-any-file: ['**/tests.py', '**/tests/**/*.py', '**/test_*.py']
+
+# API-related changes
+"api":
+- changed-files:
+  - any-glob-to-any-file: ['**/api/**/*', '**/serializers.py']
+
+# Authentication and permissions
+"security":
+- changed-files:
+  - any-glob-to-any-file: ['**/auth/**/*', '**/permissions.py', '**/users/**/*']
+
+# Dependencies
+"dependencies":
+- changed-files:
+  - any-glob-to-any-file: ['**/requirements.txt', '**/requirements/**/*.txt']
+
+# Documentation
+"documentation":
+- changed-files:
+  - any-glob-to-any-file: ['README.md', '**/*.md', '**/docs/**/*']
+
+# GitHub Actions related changes
+"github-actions":
+- changed-files:
+  - any-glob-to-any-file: ['.github/**/*']
+
+# Branch naming patterns with increased priority for Django projects
+"feature":
+- head-branch: ['^feature/', '^feat/', 'feature-', 'feat-', 'feature_', 'feat_']
+
+"enhancement":
+- head-branch: ['^enhancement/', '^enhance/', 'enhancement-', 'enhance-', 'enhancement_', 'enhance_']
+
+"bug-fix":
+- head-branch: ['^bugfix/', '^bug/', '^fix/', '^hotfix/', 'bugfix-', 'bug-', 'fix-', 'hotfix-', 'bugfix_', 'bug_', 'fix_', 'hotfix_']
+
+"refactor":
+- head-branch: ['^refactor/', 'refactor-', 'refactor_']
