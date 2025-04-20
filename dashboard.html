@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CodeRabbit Review Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
         .card {
             margin-bottom: 20px;
@@ -97,7 +98,9 @@
                         Reviews Over Time
                     </div>
                     <div class="card-body">
-                        <div class="chart-container" id="reviews-chart"></div>
+                        <div class="chart-container">
+                            <canvas id="reviews-chart"></canvas>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -107,7 +110,9 @@
                         Review Outcomes
                     </div>
                     <div class="card-body">
-                        <div class="chart-container" id="outcomes-chart"></div>
+                        <div class="chart-container">
+                            <canvas id="outcomes-chart"></canvas>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -142,163 +147,35 @@
                 </div>
             </div>
         </div>
+
+        <div class="row mt-4 mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        Security Notice
+                    </div>
+                    <div class="card-body">
+                        <p>
+                            <strong>Token Security:</strong> This dashboard uses mock data by default. For production
+                            use, implement a secure
+                            server-side API that handles GitHub authentication properly. Never expose GitHub tokens in
+                            client-side code.
+                        </p>
+                        <p>
+                            <strong>Token Rotation:</strong> The bot account token should be rotated every 90 days
+                            following security best practices.
+                            The next scheduled rotation is: <span class="fw-bold text-primary">July 19, 2025</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
+    <!-- External scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
-        // Configuration
-        const config = {
-            repoOwner: 'YOUR_GITHUB_ORG',
-            repoName: 'YOUR_GITHUB_REPO',
-            botUsername: 'your-org-bot',
-            costPerUser: 10 // $10 per user per month
-        };
-
-        // Mock data for initial display
-        const mockData = {
-            totalReviews: 237,
-            monthlyReviews: 42,
-            previousMonthReviews: 38,
-            uniqueAuthors: 16,
-            avgReviewTime: 4.2,
-            reviewsByMonth: [18, 25, 30, 32, 35, 38, 42],
-            outcomes: {
-                approved: 154,
-                needsChanges: 68,
-                needsReview: 15
-            },
-            recentReviews: [
-                { pr: '#123', title: 'Add new feature', author: 'developer1', bot: config.botUsername, date: '2025-04-20', outcome: 'approved' },
-                { pr: '#122', title: 'Fix critical bug', author: 'developer2', bot: config.botUsername, date: '2025-04-19', outcome: 'approved' },
-                { pr: '#121', title: 'Update documentation', author: 'developer3', bot: config.botUsername, date: '2025-04-18', outcome: 'needs-changes' },
-                { pr: '#120', title: 'Refactor auth module', author: 'developer4', bot: config.botUsername, date: '2025-04-17', outcome: 'needs-changes' },
-                { pr: '#119', title: 'Add unit tests', author: 'developer1', bot: config.botUsername, date: '2025-04-16', outcome: 'approved' }
-            ]
-        };
-
-        // Update dashboard metrics with mock data
-        document.getElementById('total-reviews').textContent = mockData.totalReviews;
-        document.getElementById('monthly-reviews').textContent = mockData.monthlyReviews;
-
-        const monthlyChange = mockData.monthlyReviews - mockData.previousMonthReviews;
-        const monthlyTrendEl = document.getElementById('monthly-trend');
-        if (monthlyChange > 0) {
-            monthlyTrendEl.innerHTML = `<i class="bi bi-arrow-up"></i> +${monthlyChange}`;
-            monthlyTrendEl.classList.add('trend-up');
-        } else if (monthlyChange < 0) {
-            monthlyTrendEl.innerHTML = `<i class="bi bi-arrow-down"></i> ${monthlyChange}`;
-            monthlyTrendEl.classList.add('trend-down');
-        } else {
-            monthlyTrendEl.textContent = 'No change';
-        }
-
-        // Cost savings calculation: (unique authors - 1) * cost per user
-        const costSavings = (mockData.uniqueAuthors - 1) * config.costPerUser;
-        document.getElementById('cost-savings').textContent = `$${costSavings}`;
-        document.getElementById('avg-time').textContent = mockData.avgReviewTime;
-
-        // Populate recent reviews table
-        const recentReviewsEl = document.getElementById('recent-reviews');
-        recentReviewsEl.innerHTML = '';
-
-        mockData.recentReviews.forEach(review => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><a href="#" class="text-decoration-none">${review.pr}</a> ${review.title}</td>
-                <td>${review.author}</td>
-                <td>${review.bot}</td>
-                <td>${review.date}</td>
-                <td><span class="badge bg-${review.outcome === 'approved' ? 'success' : 'warning'}">${review.outcome}</span></td>
-            `;
-            recentReviewsEl.appendChild(row);
-        });
-
-        // Create charts
-        // Reviews over time chart
-        const reviewsChartCtx = document.getElementById('reviews-chart').getContext('2d');
-        const reviewsChart = new Chart(reviewsChartCtx, {
-            type: 'line',
-            data: {
-                labels: ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr'],
-                datasets: [{
-                    label: 'Monthly Reviews',
-                    data: mockData.reviewsByMonth,
-                    borderColor: '#0d6efd',
-                    backgroundColor: 'rgba(13, 110, 253, 0.1)',
-                    tension: 0.3,
-                    fill: true
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                }
-            }
-        });
-
-        // Review outcomes chart
-        const outcomesChartCtx = document.getElementById('outcomes-chart').getContext('2d');
-        const outcomesChart = new Chart(outcomesChartCtx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Approved', 'Needs Changes', 'Needs Review'],
-                datasets: [{
-                    data: [
-                        mockData.outcomes.approved,
-                        mockData.outcomes.needsChanges,
-                        mockData.outcomes.needsReview
-                    ],
-                    backgroundColor: [
-                        '#198754',
-                        '#ffc107',
-                        '#0dcaf0'
-                    ]
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false
-            }
-        });
-
-        // In a real implementation, you would fetch actual data from GitHub's API
-        // For example:
-        /*
-        async function fetchReviewData() {
-            // You would need to implement authenticated API calls to GitHub
-            // and process the results to extract the metrics needed
-            
-            try {
-                // Fetch PR comments with @coderabbitai mentions from your bot
-                const response = await fetch(`https://api.github.com/repos/${config.repoOwner}/${config.repoName}/issues/comments?q=@coderabbitai+review`, {
-                    headers: {
-                        'Authorization': `token ${githubToken}`
-                    }
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Failed to fetch GitHub data');
-                }
-                
-                const comments = await response.json();
-                
-                // Process data and update UI
-                // ...
-                
-            } catch (error) {
-                console.error('Error fetching data:', error);
-            }
-        }
-        
-        // Call this function when the page loads
-        fetchReviewData();
-        */
-    </script>
+    <script src="dashboard.js"></script>
 </body>
 
 </html>
