@@ -4,6 +4,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   trigger-coderabbit-review:
     name: Trigger CodeRabbit Review
@@ -16,7 +21,7 @@ jobs:
         with:
           organization: roopxx
           username: ${{ github.event.pull_request.user.login }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.BOT_TOKEN }}
           
       - name: Record internal PR
         if: steps.is_organization_member.outputs.result == 'true'
@@ -69,7 +74,7 @@ jobs:
         if: steps.is_organization_member.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.BOT_TOKEN }}
           script: |
             // Get comments from the PR
             const comments = await github.rest.issues.listComments({
@@ -127,12 +132,11 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           
-      # Add a label for internal PRs
       - name: Label Internal PR
         if: steps.is_organization_member.outputs.result == 'true'
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.BOT_TOKEN }}
           script: |
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
