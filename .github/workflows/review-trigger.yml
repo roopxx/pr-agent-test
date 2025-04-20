@@ -92,7 +92,7 @@ jobs:
         if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
         run: |
           # Wait for CodeRabbit to post review (approximately 30 seconds)
-          sleep 30
+          sleep 150
           
       - name: Add Labels Based on Review
         if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
