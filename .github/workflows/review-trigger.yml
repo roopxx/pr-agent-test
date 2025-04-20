@@ -1,9 +1,8 @@
 name: CodeRabbit PR Processor
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   pull_request_target:
+    types: [opened, synchronize, reopened]
     
 permissions:
   contents: read
@@ -17,14 +16,13 @@ env:
   RATE_LIMIT_LABEL: 'rate-limited'
   
 jobs:
-  # Labeler job for PR categorization - runs on pull_request_target event
+  # Labeler job for PR categorization
   labeler:
     name: PR Labeler
     permissions:
       contents: read
       pull-requests: write
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request_target'
     steps:
     - uses: actions/labeler@v5
       with:
@@ -32,11 +30,10 @@ jobs:
         sync-labels: true
         configuration-path: .github/labeler.yml
 
-  # CodeRabbit review job - runs on pull_request event
+  # CodeRabbit review job
   trigger-coderabbit-review:
     name: Trigger CodeRabbit Review
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     outputs:
       is_internal: ${{ steps.org_membership.outputs.result }}
       is_rate_limited: ${{ steps.api_rate_limit.outputs.result == 'rate-limited' }}
@@ -229,7 +226,7 @@ jobs:
     name: Record Metrics
     runs-on: ubuntu-latest
     needs: trigger-coderabbit-review
-    if: always() && github.event_name == 'pull_request'
+    if: always()
     steps:
       - name: Record PR Metrics
         uses: actions/github-script@v6
