@@ -10,28 +10,12 @@ permissions:
   issues: write
 
 jobs:
-  debug-comment:
-    name: Debug Comment Information
-    if: github.event.issue.pull_request
-    runs-on: ubuntu-latest
-    steps:
-      - name: Output Comment Details
-        run: |
-          echo "Comment author: ${{ github.event.comment.user.login }}"
-          echo "PR number: ${{ github.event.issue.number }}"
-          echo "Comment URL: ${{ github.event.comment.html_url }}"
-          echo "Comment ID: ${{ github.event.comment.id }}"
-
   process-coderabbit-review:
     name: Process CodeRabbit Review
-    # Fixed condition that checks for several possible variations of the coderabbit username
+    # Only run for CodeRabbit bot comments on PRs
     if: >-
       github.event.issue.pull_request && 
-      (github.event.comment.user.login == 'coderabbitai' || 
-       github.event.comment.user.login == 'CodeRabbitAI' || 
-       github.event.comment.user.login == 'coderabbit' || 
-       github.event.comment.user.login == 'CodeRabbit' || 
-       contains(github.event.comment.user.login, 'coderabbit'))
+      github.event.comment.user.login == 'coderabbitai[bot]'
     runs-on: ubuntu-latest
     
     steps:
@@ -40,28 +24,12 @@ jobs:
         with:
           github-token: ${{ secrets.BOT_TOKEN }}
           script: |
-            console.log("Processing potential CodeRabbit review comment");
-            console.log(`Comment author: ${context.payload.comment.user.login}`);
-            
-            // Get the PR number from the issue event
             const prNumber = context.payload.issue.number;
             const commentBody = context.payload.comment.body;
-            
-            // Log the full comment body for debugging
-            console.log("Full comment body:");
-            console.log(commentBody);
-            
-            // More flexible check for CodeRabbit review comments
-            if (!commentBody.toLowerCase().includes('review') && 
-                !commentBody.toLowerCase().includes('coderabbit')) {
-              console.log("Comment doesn't appear to be a CodeRabbit review, but continuing anyway");
-            }
-            
-            console.log("Processing as CodeRabbit review comment");
-            
-            // Determine the review outcome with more flexible matching
-            let label = 'needs-review';
             const lowerBody = commentBody.toLowerCase();
+            
+            // Determine the review outcome based on content
+            let label = 'needs-review';
             
             if (lowerBody.includes('looks good') || 
                 lowerBody.includes('lgtm') ||
@@ -69,14 +37,12 @@ jobs:
                 lowerBody.includes('approved') ||
                 lowerBody.includes('no issues')) {
               label = 'approved';
-              console.log("Review outcome: approved");
             } else if (lowerBody.includes('issues found') || 
-                      lowerBody.includes('needs improvement') ||
-                      lowerBody.includes('changes requested') ||
-                      lowerBody.includes('fix') ||
-                      lowerBody.includes('problem')) {
+                       lowerBody.includes('needs improvement') ||
+                       lowerBody.includes('changes requested') ||
+                       lowerBody.includes('fix') ||
+                       lowerBody.includes('problem')) {
               label = 'needs-changes';
-              console.log("Review outcome: needs changes");
             }
             
             try {
@@ -88,10 +54,8 @@ jobs:
                   issue_number: prNumber,
                   name: 'review-pending'
                 });
-                console.log("Removed 'review-pending' label");
               } catch (error) {
                 // It's okay if the label doesn't exist
-                console.log("Note: Could not remove 'review-pending' label, it may not exist");
               }
               
               // Add the appropriate label
@@ -101,8 +65,8 @@ jobs:
                 issue_number: prNumber,
                 labels: [label]
               });
-              console.log(`Added '${label}' label to PR #${prNumber}`);
               
+              console.log(`CodeRabbit review processed for PR #${prNumber}. Outcome: ${label}`);
             } catch (error) {
               console.error("Error processing review:", error);
             }
@@ -112,7 +76,7 @@ jobs:
         with:
           payload: |
             {
-              "text": "CodeRabbit review completed for PR #${{ github.event.issue.number }}\nAuthor: ${{ github.event.comment.user.login }}\nURL: ${{ github.event.comment.html_url }}"
+              "text": "CodeRabbit review completed for PR #${{ github.event.issue.number }}\nOutcome: ${{ job.steps[0].outputs.outcome || 'Processed' }}\nURL: ${{ github.event.comment.html_url }}"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

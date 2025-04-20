@@ -26,8 +26,6 @@ jobs:
               const org = 'roopxx'; // Your organization name
               const username = context.payload.pull_request.user.login;
               
-              console.log(`Checking if ${username} is a member of ${org} organization`);
-              
               const result = await github.rest.orgs.checkMembershipForUser({
                 org: org,
                 username: username
@@ -37,20 +35,14 @@ jobs:
                 if (error.status === 404) {
                   return 'false'; // User is not a member
                 }
-                throw error; // Re-throw other errors
+                throw error;
               });
               
-              console.log(`Membership result: ${result}`);
               return result;
             } catch (error) {
               console.log(`Error checking membership: ${error}`);
               return 'false'; // Default to false on error
             }
-          
-      - name: Record internal PR
-        if: steps.org_membership.outputs.result == 'true'
-        run: |
-          echo "Skipping CodeRabbit review for internal PR from organization member: ${{ github.event.pull_request.user.login }}"
           
       - name: Check Rate Limit
         id: check_rate_limit
@@ -75,12 +67,8 @@ jobs:
             echo "should_skip=false" >> $GITHUB_OUTPUT
             echo $CURRENT_TIME > /tmp/last_review_time.txt
           fi
-          
-      - name: Checkout Repository
-        if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
-        uses: actions/checkout@v3
       
-      - name: Post Comment to Trigger CodeRabbit
+      - name: Trigger Review for External PR
         if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
         uses: peter-evans/create-or-update-comment@v4
         with:
@@ -88,7 +76,7 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body: "@coderabbitai review"
           
-      - name: Add Pending Label
+      - name: Label External PR as Pending Review
         if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
         uses: actions/github-script@v6
         with:
@@ -101,7 +89,7 @@ jobs:
               labels: ['review-pending']
             });
             
-      - name: Send Slack Notification
+      - name: Send Review Notification
         if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
         uses: slackapi/slack-github-action@v1.23.0
         with:
