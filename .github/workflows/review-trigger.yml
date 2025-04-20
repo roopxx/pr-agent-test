@@ -1,8 +1,9 @@
-name: CodeRabbit Auto-Review
+name: CodeRabbit PR Processor
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  pull_request_target:
     
 permissions:
   contents: read
@@ -16,16 +17,32 @@ env:
   RATE_LIMIT_LABEL: 'rate-limited'
   
 jobs:
-  trigger-coderabbit-review:
+  # Labeler job for PR categorization - runs on pull_request_target event
+  labeler:
+    name: PR Labeler
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target'
+    steps:
+    - uses: actions/labeler@v5
+      with:
+        repo-token: ${{ secrets.BOT_TOKEN }}
+        sync-labels: true
 
+  # CodeRabbit review job - runs on pull_request event
+  trigger-coderabbit-review:
     name: Trigger CodeRabbit Review
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     outputs:
       is_internal: ${{ steps.org_membership.outputs.result }}
       is_rate_limited: ${{ steps.api_rate_limit.outputs.result == 'rate-limited' }}
       review_triggered: ${{ steps.trigger_review.outcome == 'success' }}
     
     steps:
+      # Step 1: Check if PR author is an organization member
       - name: Check if organization member
         id: org_membership
         uses: actions/github-script@v6
@@ -34,7 +51,7 @@ jobs:
           result-encoding: string
           script: |
             try {
-              const org = process.env.ORG_NAME; // Using environment variable
+              const org = process.env.ORG_NAME;
               const username = context.payload.pull_request.user.login;
               
               console.log(`Checking if ${username} is a member of ${org} organization`);
@@ -56,19 +73,37 @@ jobs:
               return result;
             } catch (error) {
               console.error(`Error checking membership: ${error.message}`);
-              // Log detailed error information for troubleshooting
               if (error.response) {
                 console.error(`Status: ${error.response.status}, Headers: ${JSON.stringify(error.response.headers)}`);
               }
               return 'false'; // Default to false on error
             }
-          
+      
+      # Step 2: Label internal PRs and skip review
+      - name: Label Internal PR
+        if: steps.org_membership.outputs.result == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
+          script: |
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['internal-pr']
+              });
+              console.log('Added internal-pr label');
+            } catch (error) {
+              console.error(`Error adding label: ${error.message}`);
+            }
+
       - name: Record internal PR metrics
         if: steps.org_membership.outputs.result == 'true'
         run: |
           echo "Skipping CodeRabbit review for internal PR from organization member: ${{ github.event.pull_request.user.login }}"
           
-      # Improved rate limiting using GitHub API instead of filesystem
+      # Step 3: Rate limiting logic for external PRs
       - name: Check API-based Rate Limit
         id: api_rate_limit
         if: steps.org_membership.outputs.result == 'false'
@@ -139,6 +174,7 @@ jobs:
               return 'proceed';
             }
           
+      # Step 4: Apply rate limit label for tracking
       - name: Apply rate limit label
         if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
         uses: actions/github-script@v6
@@ -152,11 +188,13 @@ jobs:
               labels: ['${{ env.RATE_LIMIT_LABEL }}']
             });
             console.log('Applied rate limit label for tracking');
-          
+      
+      # Step 5: Prepare for review
       - name: Checkout Repository
         if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
         uses: actions/checkout@v4
       
+      # Step 6: Post the CodeRabbit review comment
       - name: Post Comment to Trigger CodeRabbit
         id: trigger_review
         if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
@@ -165,7 +203,8 @@ jobs:
           token: ${{ secrets.BOT_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
           body: "@coderabbitai review"
-          
+      
+      # Step 7: Add pending label after triggering review
       - name: Add Pending Label
         if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed' && success()
         uses: actions/github-script@v6
@@ -173,7 +212,6 @@ jobs:
           github-token: ${{ secrets.BOT_TOKEN }}
           script: |
             try {
-              // Using REST API to explicitly preserve the token identity
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -183,34 +221,14 @@ jobs:
               console.log('Added review-pending label');
             } catch (error) {
               console.error(`Error adding label: ${error.message}`);
-              // Continue workflow even if label fails
-            }
-          
-      - name: Label Internal PR
-        if: steps.org_membership.outputs.result == 'true'
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
-          script: |
-            try {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                labels: ['internal-pr']
-              });
-              console.log('Added internal-pr label');
-            } catch (error) {
-              console.error(`Error adding label: ${error.message}`);
-              // Continue workflow even if label fails
             }
   
-  # Separate job for recording metrics to ensure it has access to job outputs
+  # Analytics job - record metrics about PR reviews
   record-metrics:
     name: Record Metrics
     runs-on: ubuntu-latest
     needs: trigger-coderabbit-review
-    if: always()
+    if: always() && github.event_name == 'pull_request'
     steps:
       - name: Record PR Metrics
         uses: actions/github-script@v6
@@ -228,5 +246,5 @@ jobs:
               reviewTriggered: ${{ needs.trigger-coderabbit-review.outputs.review_triggered || 'false' }}
             };
             
-            // Log metrics for debugging
+            // Log metrics for dashboard integration
             console.log('PR Review Metrics:', JSON.stringify(metrics, null, 2));
