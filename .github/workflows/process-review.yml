@@ -10,10 +10,22 @@ permissions:
   issues: write
 
 jobs:
+  debug-comment:
+    name: Debug Comment Information
+    if: github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Output Comment Details
+        run: |
+          echo "Comment author: ${{ github.event.comment.user.login }}"
+          echo "PR number: ${{ github.event.issue.number }}"
+          echo "Comment URL: ${{ github.event.comment.html_url }}"
+          echo "Comment ID: ${{ github.event.comment.id }}"
+
   process-coderabbit-review:
     name: Process CodeRabbit Review
-    # Only run on pull request comments from CodeRabbit
-    if: github.event.issue.pull_request && github.event.comment.user.login == 'coderabbitai'
+    # More flexible condition that uses case-insensitive comparison
+    if: github.event.issue.pull_request && contains(toLower(github.event.comment.user.login), 'coderabbit')
     runs-on: ubuntu-latest
     
     steps:
@@ -22,31 +34,41 @@ jobs:
         with:
           github-token: ${{ secrets.BOT_TOKEN }}
           script: |
-            console.log("Processing CodeRabbit review comment");
+            console.log("Processing potential CodeRabbit review comment");
+            console.log(`Comment author: ${context.payload.comment.user.login}`);
             
             // Get the PR number from the issue event
             const prNumber = context.payload.issue.number;
             const commentBody = context.payload.comment.body;
             
-            // Make sure this is a CodeRabbit review comment
-            if (!commentBody.includes('CodeRabbit Review')) {
-              console.log("Comment is not a CodeRabbit review, skipping");
-              return;
+            // Log the full comment body for debugging
+            console.log("Full comment body:");
+            console.log(commentBody);
+            
+            // More flexible check for CodeRabbit review comments
+            if (!commentBody.toLowerCase().includes('review') && 
+                !commentBody.toLowerCase().includes('coderabbit')) {
+              console.log("Comment doesn't appear to be a CodeRabbit review, but continuing anyway");
             }
             
-            console.log("Found CodeRabbit review comment");
+            console.log("Processing as CodeRabbit review comment");
             
-            // Determine the review outcome
+            // Determine the review outcome with more flexible matching
             let label = 'needs-review';
+            const lowerBody = commentBody.toLowerCase();
             
-            if (commentBody.includes('looks good') || 
-                commentBody.includes('LGTM') ||
-                commentBody.includes('all good')) {
+            if (lowerBody.includes('looks good') || 
+                lowerBody.includes('lgtm') ||
+                lowerBody.includes('all good') ||
+                lowerBody.includes('approved') ||
+                lowerBody.includes('no issues')) {
               label = 'approved';
               console.log("Review outcome: approved");
-            } else if (commentBody.includes('issues found') || 
-                       commentBody.includes('needs improvement') ||
-                       commentBody.includes('changes requested')) {
+            } else if (lowerBody.includes('issues found') || 
+                      lowerBody.includes('needs improvement') ||
+                      lowerBody.includes('changes requested') ||
+                      lowerBody.includes('fix') ||
+                      lowerBody.includes('problem')) {
               label = 'needs-changes';
               console.log("Review outcome: needs changes");
             }
@@ -75,8 +97,6 @@ jobs:
               });
               console.log(`Added '${label}' label to PR #${prNumber}`);
               
-              // Send Slack notification about the completed review
-              // (You can add this if needed)
             } catch (error) {
               console.error("Error processing review:", error);
             }
@@ -86,7 +106,7 @@ jobs:
         with:
           payload: |
             {
-              "text": "CodeRabbit review completed for PR #${{ github.event.issue.number }}\nResult: ${{ github.event.comment.body }}\nURL: ${{ github.event.comment.html_url }}"
+              "text": "CodeRabbit review completed for PR #${{ github.event.issue.number }}\nAuthor: ${{ github.event.comment.user.login }}\nURL: ${{ github.event.comment.html_url }}"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
