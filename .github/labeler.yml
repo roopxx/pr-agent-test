@@ -1,0 +1,86 @@
+# Configuration for the GitHub Actions PR Labeler for Django Projects
+
+# Django-specific file patterns
+django-models:
+- '**/models.py'
+- '**/models/**/*.py'
+
+django-views:
+- '**/views.py'
+- '**/views/**/*.py'
+
+django-templates:
+- '**/templates/**/*.html'
+
+django-urls:
+- '**/urls.py'
+
+django-forms:
+- '**/forms.py'
+
+django-admin:
+- '**/admin.py'
+
+django-settings:
+- '**/settings.py'
+- '**/settings/**/*.py'
+
+django-migrations:
+- '**/migrations/**/*.py'
+
+# Frontend changes
+frontend:
+- '**/static/**/*.css'
+- '**/static/**/*.js'
+- dashboard.html
+- '**/templates/**/*.html'
+
+# Database-related changes
+database:
+- '**/models.py'
+- '**/migrations/**/*'
+
+# Testing
+tests:
+- '**/tests.py'
+- '**/tests/**/*.py'
+- '**/test_*.py'
+
+# API-related changes
+api:
+- '**/api/**/*'
+- '**/serializers.py'
+
+# Authentication and permissions
+security:
+- '**/auth/**/*'
+- '**/permissions.py'
+- '**/users/**/*'
+
+# Dependencies
+dependencies:
+- '**/requirements.txt'
+- '**/requirements/**/*.txt'
+
+# Documentation
+documentation:
+- README.md
+- '**/*.md'
+- '**/docs/**/*'
+
+# GitHub Actions related changes
+github-actions:
+- '.github/**/*'
+
+# Branch naming patterns with increased priority for Django projects
+feature:
+- head-branch: ['^feature/', '^feat/', 'feature-', 'feat-', 'feature_', 'feat_']
+
+enhancement:
+- head-branch: ['^enhancement/', '^enhance/', 'enhancement-', 'enhance-', 'enhancement_', 'enhance_', 'en']
+
+bug-fix:
+- head-branch: ['^bugfix/', '^bug/', '^fix/', '^hotfix/', 'bugfix-', 'bug-', 'fix-', 'hotfix-', 'bugfix_', 'bug_', 'fix_', 'hotfix_']
+
+refactor:
+- head-branch: ['^refactor/', 'refactor-', 'refactor_']
