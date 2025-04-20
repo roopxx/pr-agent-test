@@ -1,95 +1,142 @@
-name: CodeRabbit Review Bot
+name: CodeRabbit Auto-Review
 
 on:
   pull_request:
-    types: [opened]
-
+    types: [opened, synchronize, reopened]
+    
 jobs:
-  post-coderabbit-comment:
+  trigger-coderabbit-review:
+    name: Trigger CodeRabbit Review
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Check for existing bot comment and skip internal PRs
-        uses: actions/github-script@v7
+      - name: Check if organization member
+        id: is_organization_member
+        uses: JamesSingleton/is-organization-member@1.1.0
         with:
-          github-token: ${{ secrets.BOT_TOKEN }}
+          organization: roopxx
+          username: ${{ github.event.pull_request.user.login }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Record internal PR
+        if: steps.is_organization_member.outputs.result == 'true'
+        run: |
+          echo "Skipping CodeRabbit review for internal PR from organization member: ${{ github.event.pull_request.user.login }}"
+          
+      - name: Check Rate Limit
+        id: check_rate_limit
+        if: steps.is_organization_member.outputs.result == 'false'
+        run: |
+          # Get current time in seconds since epoch
+          CURRENT_TIME=$(date +%s)
+          
+          # Check if we've triggered a review in the last 5 minutes
+          if [ -f "/tmp/last_review_time.txt" ]; then
+            LAST_TIME=$(cat /tmp/last_review_time.txt)
+            DIFF=$((CURRENT_TIME - LAST_TIME))
+            
+            if [ $DIFF -lt 300 ]; then
+              echo "should_skip=true" >> $GITHUB_OUTPUT
+              echo "Rate limited - last review was $DIFF seconds ago"
+            else
+              echo "should_skip=false" >> $GITHUB_OUTPUT
+              echo $CURRENT_TIME > /tmp/last_review_time.txt
+            fi
+          else
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+            echo $CURRENT_TIME > /tmp/last_review_time.txt
+          fi
+          
+      - name: Checkout Repository
+        if: steps.is_organization_member.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
+        uses: actions/checkout@v3
+      
+      - name: Post Comment to Trigger CodeRabbit
+        if: steps.is_organization_member.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: "@coderabbitai review"
+          
+      - name: Wait for Review
+        if: steps.is_organization_member.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
+        run: |
+          # Wait for CodeRabbit to post review (approximately 30 seconds)
+          sleep 30
+          
+      - name: Add Labels Based on Review
+        if: steps.is_organization_member.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const pr = context.payload.pull_request;
-            const prNumber = pr.number;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const botLogin = (await github.rest.users.getAuthenticated()).data.login;
-            console.log('PR number:', prNumber);
-            console.log('BOT :', botLogin);
-            console.log('PR author:', pr.user.login);
-            // Check if PR author is a member (internal PR)
-            let isMember = false;
-            try {
-              const res = await github.rest.orgs.checkMembershipForUser({
-                org: owner,
-                username: pr.user.login
-              });
-              isMember = res.status === 204;
-              console.log('Membership check status:', res.status);
-            } catch (e) {
-              console.log('Membership check error:', e.message);
-            }
-            if (isMember) {
-              core.info('Skipping internal PR');
-              console.log('Skipping internal PR');
-              return;
-            }
-            // Check for existing bot comment
+            // Get comments from the PR
             const comments = await github.rest.issues.listComments({
-              owner,
-              repo,
-              issue_number: prNumber
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
             });
-            console.log('Number of comments found:', comments.data.length);
-            const alreadyCommented = comments.data.some(
-              c => c.user.login === botLogin && c.body.includes('@coderabbitai review')
+            
+            // Look for CodeRabbit's review comment
+            const coderabbitComment = comments.data.find(comment => 
+              comment.user.login === 'coderabbitai' && 
+              comment.body.includes('CodeRabbit Review')
             );
-            if (alreadyCommented) {
-              core.info('Bot already commented, skipping');
-              console.log('Bot already commented, skipping');
-              return;
-            }
-            core.setOutput('should_comment', 'true');
-            console.log('Bot will comment on this PR.');
-
-      - name: Post @coderabbitai comment
-        if: steps.check-for-existing-bot-comment-and-skip-internal-prs.outputs.should_comment == 'true'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.BOT_TOKEN }}
-          script: |
-            const prNumber = context.payload.pull_request.number;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const body = '@coderabbitai review';
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number: prNumber,
-              body
-            });
-
-      - name: Add 'review-requested' label
-        if: steps.check-for-existing-bot-comment-and-skip-internal-prs.outputs.should_comment == 'true'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.BOT_TOKEN }}
-          script: |
-            const prNumber = context.payload.pull_request.number;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const label = 'review-requested';
-            try {
+            
+            if (coderabbitComment) {
+              // Parse the comment to determine the quality of the review
+              let label = 'needs-review';
+              
+              if (coderabbitComment.body.includes('looks good') || 
+                  coderabbitComment.body.includes('LGTM')) {
+                label = 'approved';
+              } else if (coderabbitComment.body.includes('issues found') || 
+                         coderabbitComment.body.includes('needs improvement')) {
+                label = 'needs-changes';
+              }
+              
+              // Add the appropriate label
               await github.rest.issues.addLabels({
-                owner,
-                repo,
-                issue_number: prNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
                 labels: [label]
               });
-            } catch (e) {
-              core.info('Could not add label: ' + e.message);
+              
+              // Send notification to Slack
+              console.log(`CodeRabbit review completed with status: ${label}`);
+            } else {
+              // If no CodeRabbit comment was found, add a pending label
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['review-pending']
+              });
             }
+            
+      - name: Send Slack Notification
+        if: steps.is_organization_member.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
+        uses: slackapi/slack-github-action@v1.23.0
+        with:
+          payload: |
+            {
+              "text": "CodeRabbit review triggered for PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}\nAuthor: ${{ github.event.pull_request.user.login }}\nURL: ${{ github.event.pull_request.html_url }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          
+      # Add a label for internal PRs
+      - name: Label Internal PR
+        if: steps.is_organization_member.outputs.result == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['internal-pr']
+            });
