@@ -30,6 +30,7 @@ jobs:
       with:
         repo-token: ${{ secrets.BOT_TOKEN }}
         sync-labels: true
+        configuration-path: .github/labeler.yml
 
   # CodeRabbit review job - runs on pull_request event
   trigger-coderabbit-review:
