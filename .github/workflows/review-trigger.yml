@@ -19,6 +19,10 @@ jobs:
   trigger-coderabbit-review:
     name: Trigger CodeRabbit Review
     runs-on: ubuntu-latest
+    outputs:
+      is_internal: ${{ steps.org_membership.outputs.result }}
+      is_rate_limited: ${{ steps.api_rate_limit.outputs.result == 'rate-limited' }}
+      review_triggered: ${{ steps.trigger_review.outcome == 'success' }}
     
     steps:
       - name: Check if organization member
@@ -184,6 +188,8 @@ jobs:
         if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed' && success()
         uses: slackapi/slack-github-action@v1.24.0
         with:
+          # Fixed: Properly specifying the webhook-type and ensuring SLACK_WEBHOOK_URL is used
+          payload-json-path: ""
           payload: |
             {
               "blocks": [
@@ -221,6 +227,7 @@ jobs:
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
           
       - name: Label Internal PR
         if: steps.org_membership.outputs.result == 'true'
@@ -240,9 +247,15 @@ jobs:
               console.error(`Error adding label: ${error.message}`);
               // Continue workflow even if label fails
             }
-            
-      - name: Record Metrics
-        if: always()
+  
+  # Separate job for recording metrics to ensure it has access to job outputs
+  record-metrics:
+    name: Record Metrics
+    runs-on: ubuntu-latest
+    needs: trigger-coderabbit-review
+    if: always()
+    steps:
+      - name: Record PR Metrics
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
@@ -253,9 +266,9 @@ jobs:
               pr: context.payload.pull_request.number,
               repo: context.repo.repo,
               author: context.payload.pull_request.user.login,
-              internal: steps.org_membership.outputs.result === 'true',
-              rateLimited: steps.api_rate_limit?.outputs?.result === 'rate-limited',
-              reviewTriggered: steps.trigger_review?.outcome === 'success'
+              internal: ${{ needs.trigger-coderabbit-review.outputs.is_internal || 'false' }},
+              rateLimited: ${{ needs.trigger-coderabbit-review.outputs.is_rate_limited || 'false' }},
+              reviewTriggered: ${{ needs.trigger-coderabbit-review.outputs.review_triggered || 'false' }}
             };
             
             // Log metrics for debugging
