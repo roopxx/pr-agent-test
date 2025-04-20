@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task List</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>Task List</h1>
+            <a href="{% url 'task-create' %}" class="btn btn-primary">Add New Task</a>
+        </div>
+
+        {% if tasks %}
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Status</th>
+                    <th>Created Date</th>
+                    <th>Due Date</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td><a href="{% url 'task-detail' task.pk %}">{{ task.title }}</a></td>
+                    <td>
+                        {% if task.status == 'pending' %}
+                        <span class="badge bg-warning">Pending</span>
+                        {% elif task.status == 'in_progress' %}
+                        <span class="badge bg-info">In Progress</span>
+                        {% elif task.status == 'completed' %}
+                        <span class="badge bg-success">Completed</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ task.created_date|date:"M d, Y" }}</td>
+                    <td>{% if task.due_date %}{{ task.due_date|date:"M d, Y" }}{% else %}N/A{% endif %}</td>
+                    <td>
+                        <a href="{% url 'task-update' task.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
+                        <a href="{% url 'task-delete' task.pk %}" class="btn btn-sm btn-outline-danger">Delete</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="alert alert-info">
+            No tasks available. <a href="{% url 'task-create' %}">Create a new task</a>.
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>
