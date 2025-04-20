@@ -17,25 +17,3 @@ class Task(models.Model):
     
     def __str__(self):
         return self.title
-    
-    def is_overdue(self):
-        if self.due_date and self.status != 'completed':
-            return timezone.now() > self.due_date
-        return False
-    
-    def is_completed(self):
-        return self.status == 'completed'
-    
-    def mark_completed(self):
-        self.status = 'completed'
-        self.save()
-    
-    def mark_in_progress(self):
-        self.status = 'in_progress'
-        self.save()
-    
-    def days_until_due(self):
-        if self.due_date:
-            delta = self.due_date - timezone.now()
-            return max(0, delta.days)
-        return None
