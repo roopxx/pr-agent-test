@@ -24,8 +24,14 @@ jobs:
 
   process-coderabbit-review:
     name: Process CodeRabbit Review
-    # More flexible condition that uses case-insensitive comparison
-    if: github.event.issue.pull_request && contains(toLower(github.event.comment.user.login), 'coderabbit')
+    # Fixed condition that checks for several possible variations of the coderabbit username
+    if: >-
+      github.event.issue.pull_request && 
+      (github.event.comment.user.login == 'coderabbitai' || 
+       github.event.comment.user.login == 'CodeRabbitAI' || 
+       github.event.comment.user.login == 'coderabbit' || 
+       github.event.comment.user.login == 'CodeRabbit' || 
+       contains(github.event.comment.user.login, 'coderabbit'))
     runs-on: ubuntu-latest
     
     steps:
