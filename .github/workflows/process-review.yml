@@ -1,0 +1,92 @@
+name: Process CodeRabbit Reviews
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  process-coderabbit-review:
+    name: Process CodeRabbit Review
+    # Only run on pull request comments from CodeRabbit
+    if: github.event.issue.pull_request && github.event.comment.user.login == 'coderabbitai'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Process Review Comment
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.BOT_TOKEN }}
+          script: |
+            console.log("Processing CodeRabbit review comment");
+            
+            // Get the PR number from the issue event
+            const prNumber = context.payload.issue.number;
+            const commentBody = context.payload.comment.body;
+            
+            // Make sure this is a CodeRabbit review comment
+            if (!commentBody.includes('CodeRabbit Review')) {
+              console.log("Comment is not a CodeRabbit review, skipping");
+              return;
+            }
+            
+            console.log("Found CodeRabbit review comment");
+            
+            // Determine the review outcome
+            let label = 'needs-review';
+            
+            if (commentBody.includes('looks good') || 
+                commentBody.includes('LGTM') ||
+                commentBody.includes('all good')) {
+              label = 'approved';
+              console.log("Review outcome: approved");
+            } else if (commentBody.includes('issues found') || 
+                       commentBody.includes('needs improvement') ||
+                       commentBody.includes('changes requested')) {
+              label = 'needs-changes';
+              console.log("Review outcome: needs changes");
+            }
+            
+            try {
+              // Remove the pending label if it exists
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  name: 'review-pending'
+                });
+                console.log("Removed 'review-pending' label");
+              } catch (error) {
+                // It's okay if the label doesn't exist
+                console.log("Note: Could not remove 'review-pending' label, it may not exist");
+              }
+              
+              // Add the appropriate label
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: [label]
+              });
+              console.log(`Added '${label}' label to PR #${prNumber}`);
+              
+              // Send Slack notification about the completed review
+              // (You can add this if needed)
+            } catch (error) {
+              console.error("Error processing review:", error);
+            }
+            
+      - name: Send Slack Notification for Completed Review
+        uses: slackapi/slack-github-action@v1.23.0
+        with:
+          payload: |
+            {
+              "text": "CodeRabbit review completed for PR #${{ github.event.issue.number }}\nResult: ${{ github.event.comment.body }}\nURL: ${{ github.event.comment.html_url }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

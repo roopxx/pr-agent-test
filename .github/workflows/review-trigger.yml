@@ -88,62 +88,18 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body: "@coderabbitai review"
           
-      - name: Wait for Review
-        if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
-        run: |
-          # Wait for CodeRabbit to post review (approximately 30 seconds)
-          sleep 150
-          
-      - name: Add Labels Based on Review
+      - name: Add Pending Label
         if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.BOT_TOKEN }}
           script: |
-            // Get comments from the PR
-            const comments = await github.rest.issues.listComments({
+            await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
+              labels: ['review-pending']
             });
-            
-            // Look for CodeRabbit's review comment
-            const coderabbitComment = comments.data.find(comment => 
-              comment.user.login === 'coderabbitai' && 
-              comment.body.includes('CodeRabbit Review')
-            );
-            
-            if (coderabbitComment) {
-              // Parse the comment to determine the quality of the review
-              let label = 'needs-review';
-              
-              if (coderabbitComment.body.includes('looks good') || 
-                  coderabbitComment.body.includes('LGTM')) {
-                label = 'approved';
-              } else if (coderabbitComment.body.includes('issues found') || 
-                         coderabbitComment.body.includes('needs improvement')) {
-                label = 'needs-changes';
-              }
-              
-              // Add the appropriate label
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                labels: [label]
-              });
-              
-              // Send notification to Slack
-              console.log(`CodeRabbit review completed with status: ${label}`);
-            } else {
-              // If no CodeRabbit comment was found, add a pending label
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                labels: ['review-pending']
-              });
-            }
             
       - name: Send Slack Notification
         if: steps.org_membership.outputs.result == 'false' && steps.check_rate_limit.outputs.should_skip != 'true'
