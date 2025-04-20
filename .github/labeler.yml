@@ -1,10 +1,6 @@
 # Configuration for the GitHub Actions PR Labeler for Django Projects
 
 # Django-specific file patterns
-"django-models":
-- changed-files:
-  - any-glob-to-any-file: ['**/models.py', '**/models/**/*.py']
-
 "django-views":
 - changed-files:
   - any-glob-to-any-file: ['**/views.py', '**/views/**/*.py']
@@ -13,25 +9,9 @@
 - changed-files:
   - any-glob-to-any-file: ['**/templates/**/*.html']
 
-"django-urls":
-- changed-files:
-  - any-glob-to-any-file: ['**/urls.py']
-
-"django-forms":
-- changed-files:
-  - any-glob-to-any-file: ['**/forms.py']
-
-"django-admin":
-- changed-files:
-  - any-glob-to-any-file: ['**/admin.py']
-
 "django-settings":
 - changed-files:
   - any-glob-to-any-file: ['**/settings.py', '**/settings/**/*.py']
-
-"django-migrations":
-- changed-files:
-  - any-glob-to-any-file: ['**/migrations/**/*.py']
 
 # Frontend changes
 "frontend":
