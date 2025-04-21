@@ -1,0 +1,53 @@
+{% extends 'tasks/base.html' %}
+
+{% block title %}{{ task.title }}{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-header 
+        {% if task.priority == 'high' %}bg-danger text-white
+        {% elif task.priority == 'medium' %}bg-warning
+        {% else %}bg-info text-white{% endif %}">
+        <h1 class="h4">{{ task.title }}</h1>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+            <span class="badge 
+                {% if task.status == 'completed' %}bg-success
+                {% elif task.status == 'in_progress' %}bg-primary
+                {% else %}bg-secondary{% endif %}">
+                {{ task.get_status_display }}
+            </span>
+            <span class="badge 
+                {% if task.priority == 'high' %}bg-danger
+                {% elif task.priority == 'medium' %}bg-warning text-dark
+                {% else %}bg-info{% endif %}">
+                {{ task.get_priority_display }} Priority
+            </span>
+        </div>
+
+        <h5>Description</h5>
+        <p>{{ task.description|linebreaks|default:"No description provided." }}</p>
+
+        <dl class="row">
+            <dt class="col-sm-3">Created Date</dt>
+            <dd class="col-sm-9">{{ task.created_date|date:"F j, Y, g:i a" }}</dd>
+
+            {% if task.due_date %}
+            <dt class="col-sm-3">Due Date</dt>
+            <dd class="col-sm-9">{{ task.due_date|date:"F j, Y, g:i a" }}</dd>
+            {% endif %}
+        </dl>
+    </div>
+    <div class="card-footer">
+        <div class="btn-group">
+            <a href="{% url 'task-list' %}" class="btn btn-secondary">Back to List</a>
+            <a href="{% url 'task-update' task.pk %}" class="btn btn-primary">Edit</a>
+            <a href="{% url 'task-delete' task.pk %}" class="btn btn-danger">Delete</a>
+            {% if task.status != 'completed' %}
+            <a href="{% url 'task-complete' task.pk %}" class="btn btn-success">Mark Complete</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
