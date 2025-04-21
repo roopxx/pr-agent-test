@@ -45,7 +45,7 @@ jobs:
        contains(github.event.comment.body, '@coderabbitai review'))
     outputs:
       is_internal: ${{ steps.org_membership.outputs.result }}
-      is_rate_limited: ${{ steps.api_rate_limit.outputs.result == 'rate-limited' }}
+      is_rate_limited: ${{ steps.check_comment_rate_limit.outputs.result == 'rate-limited' }}
       review_triggered: ${{ steps.trigger_review.outcome == 'success' }}
     
     steps:
@@ -133,9 +133,9 @@ jobs:
         run: |
           echo "Skipping CodeRabbit review for internal PR from organization member"
           
-      # Step 3: Rate limiting logic for external PRs
-      - name: Check API-based Rate Limit
-        id: api_rate_limit
+      # Step 3: Check for recent CodeRabbit comments instead of using labels
+      - name: Check Comment-based Rate Limit
+        id: check_comment_rate_limit
         if: steps.org_membership.outputs.result == 'false'
         uses: actions/github-script@v6
         with:
@@ -144,97 +144,61 @@ jobs:
           script: |
             try {
               const rateLimitMinutes = parseInt(process.env.RATE_LIMIT_MINUTES);
-              const rateLimitLabel = process.env.RATE_LIMIT_LABEL;
               const now = new Date();
               const cutoffTime = new Date(now.getTime() - (rateLimitMinutes * 60 * 1000));
               const prNumber = process.env.PR_NUMBER;
               
-              console.log(`Checking rate limit using GitHub API state (${rateLimitMinutes} minute window) for PR #${prNumber}`);
+              console.log(`Checking rate limit by comment time (${rateLimitMinutes} minute window) for PR #${prNumber}`);
               
-              // Check if the rate limit label exists on this PR
-              const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              // Get the PR comments
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: prNumber
+                issue_number: prNumber,
+                per_page: 100
               });
               
-              const hasRateLimitLabel = labels.some(label => label.name === rateLimitLabel);
+              // Find the most recent coderabbit review comment
+              const coderabbitComments = comments.filter(comment => 
+                (comment.user.login === 'coderabbitai[bot]' || comment.body.includes('@coderabbitai review'))
+              ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
               
-              if (hasRateLimitLabel) {
-                // Get PR timeline to find when the label was added
-                const { data: timeline } = await github.rest.issues.listEventsForTimeline({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  per_page: 100
-                });
+              if (coderabbitComments.length > 0) {
+                const lastCommentTime = new Date(coderabbitComments[0].created_at);
                 
-                // Find the most recent labeled event for our rate limit label
-                const labelEvents = timeline.filter(event => 
-                  event.event === 'labeled' && event.label && event.label.name === rateLimitLabel
-                ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                console.log(`Last CodeRabbit comment was at: ${lastCommentTime.toISOString()}`);
+                console.log(`Cutoff time for rate limiting: ${cutoffTime.toISOString()}`);
                 
-                if (labelEvents.length > 0) {
-                  const lastLabelTime = new Date(labelEvents[0].created_at);
+                if (lastCommentTime > cutoffTime) {
+                  // Still within rate limit window
+                  const minutesRemaining = Math.round((lastCommentTime.getTime() + rateLimitMinutes * 60 * 1000 - now.getTime()) / 1000 / 60);
+                  console.log(`PR is still rate limited (${minutesRemaining} minutes remaining)`);
                   
-                  console.log(`Rate limit label was last added at: ${lastLabelTime.toISOString()}`);
-                  console.log(`Cutoff time for rate limiting: ${cutoffTime.toISOString()}`);
-                  
-                  if (lastLabelTime > cutoffTime) {
-                    // Still within rate limit window
-                    const minutesRemaining = Math.round((lastLabelTime.getTime() + rateLimitMinutes * 60 * 1000 - now.getTime()) / 1000 / 60);
-                    console.log(`PR is still rate limited (${minutesRemaining} minutes remaining)`);
-                    
-                    // For comment events, post a rate limit notification
-                    if (context.eventName === 'issue_comment') {
-                      await github.rest.issues.createComment({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: prNumber,
-                        body: `⏱️ **Rate limit active:** This PR has been reviewed recently. Please wait ${minutesRemaining} more minutes before requesting another review.`
-                      });
-                    }
-                    
-                    return 'rate-limited';
-                  } else {
-                    // Rate limit expired, remove the label
-                    console.log('Rate limit expired, removing label');
-                    await github.rest.issues.removeLabel({
+                  // For comment events, post a rate limit notification
+                  if (context.eventName === 'issue_comment') {
+                    await github.rest.issues.createComment({
                       owner: context.repo.owner,
                       repo: context.repo.repo,
                       issue_number: prNumber,
-                      name: rateLimitLabel
+                      body: `⏱️ **Rate limit active:** This PR has been reviewed recently. Please wait ${minutesRemaining} more minutes before requesting another review.`
                     });
                   }
+                  
+                  return 'rate-limited';
                 }
               }
               
               // Not rate limited
               return 'proceed';
             } catch (error) {
-              console.error(`Error checking rate limit: ${error.message}`);
+              console.error(`Error checking comment rate limit: ${error.message}`);
               // Fall back to proceeding if there's an error checking the rate limit
               return 'proceed';
             }
-          
-      # Step 4: Apply rate limit label for tracking
-      - name: Apply rate limit label
-        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.BOT_TOKEN }}
-          script: |
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: process.env.PR_NUMBER,
-              labels: ['${{ env.RATE_LIMIT_LABEL }}']
-            });
-            console.log('Applied rate limit label for tracking');
       
       # Step 5: Prepare for review
       - name: Checkout Repository
-        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
+        if: steps.org_membership.outputs.result == 'false' && steps.check_comment_rate_limit.outputs.result == 'proceed'
         uses: actions/checkout@v4
       
       # Step 6: Post the CodeRabbit review comment
@@ -242,7 +206,7 @@ jobs:
         id: trigger_review
         if: >-
           steps.org_membership.outputs.result == 'false' && 
-          steps.api_rate_limit.outputs.result == 'proceed' && 
+          steps.check_comment_rate_limit.outputs.result == 'proceed' && 
           github.event_name == 'pull_request_target'
         uses: peter-evans/create-or-update-comment@v4
         with:
@@ -254,7 +218,7 @@ jobs:
       - name: Add Pending Label
         if: >-
           steps.org_membership.outputs.result == 'false' && 
-          steps.api_rate_limit.outputs.result == 'proceed' && 
+          steps.check_comment_rate_limit.outputs.result == 'proceed' && 
           success()
         uses: actions/github-script@v6
         with:
