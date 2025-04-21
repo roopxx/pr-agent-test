@@ -23,7 +23,6 @@ We use [@coderabbitai](https://github.com/coderabbitai) for code reviews, but cu
 2. The workflow checks if the PR author is a member of your organization
 3. When conditions are met, the workflow comments on the PR using a central bot account
 4. The comment "@coderabbitai review" triggers CodeRabbit to review the PR
-5. Labels are automatically added based on the review results
 
 ## Setup Instructions
 
@@ -39,20 +38,7 @@ Add the following secrets to your GitHub repository:
 
 - `BOT_TOKEN`: The Personal Access Token (PAT) of your bot user account
 
-### 3. Customize Organization Settings
-
-In the workflow file (`.github/workflows/review-trigger.yml`), update the organization name:
-```yaml
-- name: Check if organization member
-  id: is_organization_member
-  uses: JamesSingleton/is-organization-member@1.1.0
-  with:
-    organization: testorg  # Replace with your organization name
-    username: ${{ github.event.pull_request.user.login }}
-    token: ${{ secrets.GITHUB_TOKEN }}
-```
-
-### 4. Deploy the Workflow
+### 3. Deploy the Workflow
 
 The GitHub Actions workflow file is already set up in this repository. It will automatically run when PRs are created or updated.
 
@@ -67,30 +53,8 @@ The system uses GitHub's API to check organization membership and skip reviews f
 ### Labeling System
 PRs receive automatic labels based on:
 - Source (internal/external)
-- Review outcome (approved/changes-requested/commented)
+- File changes (frontend, databases, etc) ref: labeler.yml for more info
 - Content analysis (documentation/feature/bugfix)
 
-### Dashboard Implementation
-A basic dashboard is provided showing:
-- Reviews triggered per day/week/month
-- Cost savings compared to individual billing
-- Common issue categories identified
-- Average time to resolution
-
-## Future Enhancements
-
-- Enhanced dashboard with cost-saving metrics
-- Customizable review triggers based on PR size and content
-- Integration with additional notification channels
-- Machine learning to predict which PRs need most review attention
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-MIT
-
 ## Last Updated
-April 20, 2025
+April 21, 2025
