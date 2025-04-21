@@ -15,16 +15,15 @@ permissions:
 env:
   ORG_NAME: 'roopxx'
   RATE_LIMIT_MINUTES: 5
-  RATE_LIMIT_LABEL: 'rate-limited'
   
 jobs:
-  # Only for PR labeling on PR create/update - not for comments
+  # Apply labels to PRs based on files changed
   labeler:
     name: PR Labeler
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-    runs-on: ubuntu-latest
     if: github.event_name == 'pull_request_target'
     steps:
     - uses: actions/labeler@v5
@@ -33,11 +32,11 @@ jobs:
         sync-labels: true
         configuration-path: .github/labeler.yml
 
-  # CodeRabbit review job - responds to both PR events and comments
+  # Trigger CodeRabbit review with rate limiting
   trigger-coderabbit-review:
     name: Trigger CodeRabbit Review
     runs-on: ubuntu-latest
-    # Only run on pull_request_target events or when a comment contains the trigger phrase
+    # Run on new/updated PRs or when review comment is posted
     if: >-
       github.event_name == 'pull_request_target' || 
       (github.event_name == 'issue_comment' && 
@@ -49,19 +48,19 @@ jobs:
       review_triggered: ${{ steps.trigger_review.outcome == 'success' }}
     
     steps:
-      # For issue_comment events, get PR details
-      - name: Get PR number
-        id: get_pr
+      # Step 1: Get PR number based on event type
+      - name: Get PR number from comment
+        id: get_pr_from_comment
         if: github.event_name == 'issue_comment'
         run: echo "PR_NUMBER=${{ github.event.issue.number }}" >> $GITHUB_ENV
       
-      # For pull_request_target events, set PR number
-      - name: Set PR number
+      - name: Get PR number from PR event
+        id: get_pr_from_event
         if: github.event_name == 'pull_request_target'
         run: echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
 
-      # Step 1: Check if PR author is an organization member
-      - name: Check if organization member
+      # Step 2: Check if PR author is an organization member
+      - name: Check organization membership
         id: org_membership
         uses: actions/github-script@v6
         with:
@@ -75,7 +74,7 @@ jobs:
               if (context.eventName === 'pull_request_target') {
                 username = context.payload.pull_request.user.login;
               } else if (context.eventName === 'issue_comment') {
-                // For comments, check the PR author, not the comment author
+                // Get PR details to find author
                 const { data: pullRequest } = await github.rest.pulls.get({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -86,31 +85,30 @@ jobs:
               
               console.log(`Checking if ${username} is a member of ${org} organization`);
               
-              const result = await github.rest.orgs.checkMembershipForUser({
-                org: org,
-                username: username
-              }).then(() => {
+              try {
+                await github.rest.orgs.checkMembershipForUser({
+                  org: org,
+                  username: username
+                });
                 console.log(`${username} is a member of ${org}`);
                 return 'true'; // User is a member
-              }).catch((error) => {
+              } catch (error) {
                 if (error.status === 404) {
                   console.log(`${username} is not a member of ${org}`);
                   return 'false'; // User is not a member
                 }
                 throw error; // Re-throw other errors
-              });
-              
-              return result;
+              }
             } catch (error) {
               console.error(`Error checking membership: ${error.message}`);
               if (error.response) {
                 console.error(`Status: ${error.response.status}, Headers: ${JSON.stringify(error.response.headers)}`);
               }
-              return 'false'; // Default to false on error
+              return 'false'; // Default to false on error to avoid blocking reviews
             }
       
-      # Step 2: Label internal PRs and skip review
-      - name: Label Internal PR
+      # Step 3: Label internal PRs and skip review
+      - name: Apply internal PR label
         if: steps.org_membership.outputs.result == 'true'
         uses: actions/github-script@v6
         with:
@@ -125,16 +123,17 @@ jobs:
               });
               console.log('Added internal-pr label');
             } catch (error) {
-              console.error(`Error adding label: ${error.message}`);
+              console.error(`Error adding internal-pr label: ${error.message}`);
+              // Non-fatal error, continue workflow
             }
 
-      - name: Record internal PR metrics
+      - name: Log internal PR info
         if: steps.org_membership.outputs.result == 'true'
         run: |
           echo "Skipping CodeRabbit review for internal PR from organization member"
           
-      # Step 3: Check for recent CodeRabbit comments instead of using labels
-      - name: Check Comment-based Rate Limit
+      # Step 4: Check for recent CodeRabbit comments (rate limiting)
+      - name: Check for recent reviews
         id: check_comment_rate_limit
         if: steps.org_membership.outputs.result == 'false'
         uses: actions/github-script@v6
@@ -150,7 +149,7 @@ jobs:
               
               console.log(`Checking rate limit by comment time (${rateLimitMinutes} minute window) for PR #${prNumber}`);
               
-              // Get the PR comments
+              // Get recent PR comments
               const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -158,9 +157,10 @@ jobs:
                 per_page: 100
               });
               
-              // Find the most recent coderabbit review comment
+              // Find CodeRabbit related comments (bot comments or review triggers)
               const coderabbitComments = comments.filter(comment => 
-                (comment.user.login === 'coderabbitai[bot]' || comment.body.includes('@coderabbitai review'))
+                (comment.user.login === 'coderabbitai[bot]' || 
+                 comment.body.includes('@coderabbitai review'))
               ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
               
               if (coderabbitComments.length > 0) {
@@ -170,11 +170,13 @@ jobs:
                 console.log(`Cutoff time for rate limiting: ${cutoffTime.toISOString()}`);
                 
                 if (lastCommentTime > cutoffTime) {
-                  // Still within rate limit window
-                  const minutesRemaining = Math.round((lastCommentTime.getTime() + rateLimitMinutes * 60 * 1000 - now.getTime()) / 1000 / 60);
-                  console.log(`PR is still rate limited (${minutesRemaining} minutes remaining)`);
+                  // Within rate limit window - deny new review
+                  const minutesRemaining = Math.round(
+                    (lastCommentTime.getTime() + rateLimitMinutes * 60 * 1000 - now.getTime()) / 60000
+                  );
+                  console.log(`PR is rate limited (${minutesRemaining} minutes remaining)`);
                   
-                  // For comment events, post a rate limit notification
+                  // Only notify on manual comment triggers
                   if (context.eventName === 'issue_comment') {
                     await github.rest.issues.createComment({
                       owner: context.repo.owner,
@@ -192,17 +194,17 @@ jobs:
               return 'proceed';
             } catch (error) {
               console.error(`Error checking comment rate limit: ${error.message}`);
-              // Fall back to proceeding if there's an error checking the rate limit
+              // On error, default to proceeding with review to avoid blocking
               return 'proceed';
             }
       
-      # Step 5: Prepare for review
+      # Step 5: Checkout repository to access any needed files
       - name: Checkout Repository
         if: steps.org_membership.outputs.result == 'false' && steps.check_comment_rate_limit.outputs.result == 'proceed'
         uses: actions/checkout@v4
       
-      # Step 6: Post the CodeRabbit review comment
-      - name: Post Comment to Trigger CodeRabbit
+      # Step 6: Post CodeRabbit review trigger comment
+      - name: Trigger CodeRabbit Review
         id: trigger_review
         if: >-
           steps.org_membership.outputs.result == 'false' && 
@@ -214,8 +216,8 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body: "@coderabbitai review"
       
-      # Step 7: Add pending label after triggering review
-      - name: Add Pending Label
+      # Step 7: Add pending label to track review status
+      - name: Apply review pending label
         if: >-
           steps.org_membership.outputs.result == 'false' && 
           steps.check_comment_rate_limit.outputs.result == 'proceed' && 
@@ -233,10 +235,11 @@ jobs:
               });
               console.log('Added review-pending label');
             } catch (error) {
-              console.error(`Error adding label: ${error.message}`);
+              console.error(`Error adding review-pending label: ${error.message}`);
+              // Non-fatal error, continue workflow
             }
   
-  # Analytics job - record metrics about PR reviews
+  # Record metrics for dashboard and monitoring
   record-metrics:
     name: Record Metrics
     runs-on: ubuntu-latest
@@ -248,19 +251,27 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
           script: |
-            const date = new Date().toISOString().split('T')[0];
-            const prNumber = process.env.PR_NUMBER || (context.eventName === 'pull_request_target' ? context.payload.pull_request.number : context.payload.issue.number);
-            
-            const metrics = {
-              date: date,
-              pr: prNumber,
-              repo: context.repo.repo,
-              authorAction: context.actor,
-              eventType: context.eventName,
-              internal: ${{ needs.trigger-coderabbit-review.outputs.is_internal || 'false' }},
-              rateLimited: ${{ needs.trigger-coderabbit-review.outputs.is_rate_limited || 'false' }},
-              reviewTriggered: ${{ needs.trigger-coderabbit-review.outputs.review_triggered || 'false' }}
-            };
-            
-            // Log metrics for dashboard integration
-            console.log('PR Review Metrics:', JSON.stringify(metrics, null, 2));
+            try {
+              const date = new Date().toISOString().split('T')[0];
+              const prNumber = process.env.PR_NUMBER || 
+                (context.eventName === 'pull_request_target' ? 
+                  context.payload.pull_request.number : 
+                  context.payload.issue.number);
+              
+              const metrics = {
+                date: date,
+                pr: prNumber,
+                repo: context.repo.repo,
+                authorAction: context.actor,
+                eventType: context.eventName,
+                internal: ${{ needs.trigger-coderabbit-review.outputs.is_internal || 'false' }},
+                rateLimited: ${{ needs.trigger-coderabbit-review.outputs.is_rate_limited || 'false' }},
+                reviewTriggered: ${{ needs.trigger-coderabbit-review.outputs.review_triggered || 'false' }}
+              };
+              
+              // Log metrics for dashboard integration
+              console.log('PR Review Metrics:', JSON.stringify(metrics, null, 2));
+            } catch (error) {
+              console.error(`Error recording metrics: ${error.message}`);
+              // Non-fatal error, continue workflow
+            }
