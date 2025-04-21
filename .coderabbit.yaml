@@ -1,0 +1,49 @@
+language: en-US
+tone_instructions: ''
+early_access: false
+enable_free_tier: true
+auto_resolve_threads: true
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: false
+  high_level_summary_placeholder: '@coderabbitai summary'
+  high_level_summary_in_walkthrough: false
+  auto_title_placeholder: '@coderabbitai'
+  auto_title_instructions: ''
+  review_status: false
+  commit_status: false
+  fail_commit_status: false
+  collapse_walkthrough: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  auto_apply_labels: true
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  poem: false
+  labeling_instructions: []
+  path_filters: []
+  path_instructions: []
+  abort_on_close: false
+  auto_review:
+    enabled: false
+    auto_incremental_review: false
+    ignore_title_keywords: []
+    labels: []
+    drafts: false
+    base_branches: []
+  finishing_touches:
+    docstrings:
+      enabled: true
+chat:
+  auto_reply: false
+  create_issues: true
+  integrations:
+    jira:
+      usage: auto
+    linear:
+      usage: auto
