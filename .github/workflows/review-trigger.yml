@@ -1,9 +1,10 @@
 name: CodeRabbit PR Processor
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
     
 permissions:
   contents: read
@@ -17,7 +18,7 @@ env:
   RATE_LIMIT_LABEL: 'rate-limited'
   
 jobs:
-  # Labeler job for PR categorization - runs on pull_request_target event
+  # Only for PR labeling on PR create/update - not for comments
   labeler:
     name: PR Labeler
     permissions:
@@ -30,18 +31,35 @@ jobs:
       with:
         repo-token: ${{ secrets.BOT_TOKEN }}
         sync-labels: true
+        configuration-path: .github/labeler.yml
 
-  # CodeRabbit review job - runs on pull_request event
+  # CodeRabbit review job - responds to both PR events and comments
   trigger-coderabbit-review:
     name: Trigger CodeRabbit Review
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # Only run on pull_request_target events or when a comment contains the trigger phrase
+    if: >-
+      github.event_name == 'pull_request_target' || 
+      (github.event_name == 'issue_comment' && 
+       github.event.issue.pull_request && 
+       contains(github.event.comment.body, '@coderabbitai review'))
     outputs:
       is_internal: ${{ steps.org_membership.outputs.result }}
       is_rate_limited: ${{ steps.api_rate_limit.outputs.result == 'rate-limited' }}
       review_triggered: ${{ steps.trigger_review.outcome == 'success' }}
     
     steps:
+      # For issue_comment events, get PR details
+      - name: Get PR number
+        id: get_pr
+        if: github.event_name == 'issue_comment'
+        run: echo "PR_NUMBER=${{ github.event.issue.number }}" >> $GITHUB_ENV
+      
+      # For pull_request_target events, set PR number
+      - name: Set PR number
+        if: github.event_name == 'pull_request_target'
+        run: echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+
       # Step 1: Check if PR author is an organization member
       - name: Check if organization member
         id: org_membership
@@ -52,7 +70,19 @@ jobs:
           script: |
             try {
               const org = process.env.ORG_NAME;
-              const username = context.payload.pull_request.user.login;
+              let username;
+              
+              if (context.eventName === 'pull_request_target') {
+                username = context.payload.pull_request.user.login;
+              } else if (context.eventName === 'issue_comment') {
+                // For comments, check the PR author, not the comment author
+                const { data: pullRequest } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: process.env.PR_NUMBER
+                });
+                username = pullRequest.user.login;
+              }
               
               console.log(`Checking if ${username} is a member of ${org} organization`);
               
@@ -90,7 +120,7 @@ jobs:
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: process.env.PR_NUMBER,
                 labels: ['internal-pr']
               });
               console.log('Added internal-pr label');
@@ -101,7 +131,7 @@ jobs:
       - name: Record internal PR metrics
         if: steps.org_membership.outputs.result == 'true'
         run: |
-          echo "Skipping CodeRabbit review for internal PR from organization member: ${{ github.event.pull_request.user.login }}"
+          echo "Skipping CodeRabbit review for internal PR from organization member"
           
       # Step 3: Rate limiting logic for external PRs
       - name: Check API-based Rate Limit
@@ -117,14 +147,15 @@ jobs:
               const rateLimitLabel = process.env.RATE_LIMIT_LABEL;
               const now = new Date();
               const cutoffTime = new Date(now.getTime() - (rateLimitMinutes * 60 * 1000));
+              const prNumber = process.env.PR_NUMBER;
               
-              console.log(`Checking rate limit using GitHub API state (${rateLimitMinutes} minute window)`);
+              console.log(`Checking rate limit using GitHub API state (${rateLimitMinutes} minute window) for PR #${prNumber}`);
               
               // Check if the rate limit label exists on this PR
               const { data: labels } = await github.rest.issues.listLabelsOnIssue({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number
+                issue_number: prNumber
               });
               
               const hasRateLimitLabel = labels.some(label => label.name === rateLimitLabel);
@@ -134,7 +165,7 @@ jobs:
                 const { data: timeline } = await github.rest.issues.listEventsForTimeline({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  issue_number: context.issue.number,
+                  issue_number: prNumber,
                   per_page: 100
                 });
                 
@@ -151,7 +182,19 @@ jobs:
                   
                   if (lastLabelTime > cutoffTime) {
                     // Still within rate limit window
-                    console.log(`PR is still rate limited (${Math.round((lastLabelTime - cutoffTime) / 1000 / 60)} minutes remaining)`);
+                    const minutesRemaining = Math.round((lastLabelTime.getTime() + rateLimitMinutes * 60 * 1000 - now.getTime()) / 1000 / 60);
+                    console.log(`PR is still rate limited (${minutesRemaining} minutes remaining)`);
+                    
+                    // For comment events, post a rate limit notification
+                    if (context.eventName === 'issue_comment') {
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: prNumber,
+                        body: `⏱️ **Rate limit active:** This PR has been reviewed recently. Please wait ${minutesRemaining} more minutes before requesting another review.`
+                      });
+                    }
+                    
                     return 'rate-limited';
                   } else {
                     // Rate limit expired, remove the label
@@ -159,7 +202,7 @@ jobs:
                     await github.rest.issues.removeLabel({
                       owner: context.repo.owner,
                       repo: context.repo.repo,
-                      issue_number: context.issue.number,
+                      issue_number: prNumber,
                       name: rateLimitLabel
                     });
                   }
@@ -184,7 +227,7 @@ jobs:
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: process.env.PR_NUMBER,
               labels: ['${{ env.RATE_LIMIT_LABEL }}']
             });
             console.log('Applied rate limit label for tracking');
@@ -197,7 +240,10 @@ jobs:
       # Step 6: Post the CodeRabbit review comment
       - name: Post Comment to Trigger CodeRabbit
         id: trigger_review
-        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed'
+        if: >-
+          steps.org_membership.outputs.result == 'false' && 
+          steps.api_rate_limit.outputs.result == 'proceed' && 
+          github.event_name == 'pull_request_target'
         uses: peter-evans/create-or-update-comment@v4
         with:
           token: ${{ secrets.BOT_TOKEN }}
@@ -206,7 +252,10 @@ jobs:
       
       # Step 7: Add pending label after triggering review
       - name: Add Pending Label
-        if: steps.org_membership.outputs.result == 'false' && steps.api_rate_limit.outputs.result == 'proceed' && success()
+        if: >-
+          steps.org_membership.outputs.result == 'false' && 
+          steps.api_rate_limit.outputs.result == 'proceed' && 
+          success()
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.BOT_TOKEN }}
@@ -215,7 +264,7 @@ jobs:
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: process.env.PR_NUMBER,
                 labels: ['review-pending']
               });
               console.log('Added review-pending label');
@@ -228,7 +277,7 @@ jobs:
     name: Record Metrics
     runs-on: ubuntu-latest
     needs: trigger-coderabbit-review
-    if: always() && github.event_name == 'pull_request'
+    if: always()
     steps:
       - name: Record PR Metrics
         uses: actions/github-script@v6
@@ -236,11 +285,14 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN || secrets.BOT_TOKEN }}
           script: |
             const date = new Date().toISOString().split('T')[0];
+            const prNumber = process.env.PR_NUMBER || (context.eventName === 'pull_request_target' ? context.payload.pull_request.number : context.payload.issue.number);
+            
             const metrics = {
               date: date,
-              pr: context.payload.pull_request.number,
+              pr: prNumber,
               repo: context.repo.repo,
-              author: context.payload.pull_request.user.login,
+              authorAction: context.actor,
+              eventType: context.eventName,
               internal: ${{ needs.trigger-coderabbit-review.outputs.is_internal || 'false' }},
               rateLimited: ${{ needs.trigger-coderabbit-review.outputs.is_rate_limited || 'false' }},
               reviewTriggered: ${{ needs.trigger-coderabbit-review.outputs.review_triggered || 'false' }}
